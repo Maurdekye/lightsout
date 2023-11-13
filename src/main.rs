@@ -1,8 +1,8 @@
 use rand::prelude::*;
 use std::{collections::{BinaryHeap, HashSet}, fmt::Display, time::SystemTime};
 
-trait Search: Clone + std::hash::Hash + Eq + PartialEq {
-    type Score: Ord;
+trait Search: Clone + std::hash::Hash + Eq + PartialEq + Display {
+    type Score: Ord + Display;
 
     fn score(&self) -> Self::Score;
     fn end(&self) -> bool;
@@ -61,11 +61,7 @@ impl Display for Board {
                 f,
                 "{}",
                 (0..self.width)
-                    .map(|x| if row & (1 << x) == 0 {
-                        "░░"
-                    } else {
-                        "██"
-                    })
+                    .map(|x| if row & (1 << x) == 0 {"░░"} else {"██"})
                     // .map(|x| if row & (1 << x) == 0 { ".." } else { "##" })
                     .collect::<Vec<_>>()
                     .join("")
@@ -111,10 +107,22 @@ impl Search for Board {
     }
 
     fn moves(&self) -> Vec<Self> {
+        let init_score = self.score();
         (0..self.width)
             .map(|x| {
                 (0..self.height)
-                    .map(|y| self.clone_toggle(x, y))
+                    .map(|y| (self.clone_toggle(x, y), x, y))
+                    .filter(|(board, x, y)| {
+                        let mut target_score = 3;
+                        if *x > 0 && *x < board.width - 1 {
+                            target_score += 1;
+                        }
+                        if *y > 0 && *y < board.height - 1 {
+                            target_score += 1;
+                        }
+                        board.score() != init_score - target_score
+                    })
+                    .map(|(board, _, _)| board)
                     .collect::<Vec<_>>()
             })
             .flatten()
@@ -210,9 +218,13 @@ fn a_star<T: Search>(init_state: T) -> (Option<SearchState<T>>, usize) {
 
 fn main() {
     let mut init_board = Board::new(5, 5);
-    for y in 0..init_board.height {
-        init_board.rows[y] = (1 << init_board.width + 1) - 1;
-    }
+    // for y in 0..init_board.height - 3 {
+    //     init_board.rows[y] = (1 << init_board.width + 1) - 1;
+    // }
+    // for mv in init_board.moves() {
+    //     println!("{mv}");
+    // }
+    init_board.randomize();
     println!("{init_board}");
 
     let start = SystemTime::now();
