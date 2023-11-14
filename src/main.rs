@@ -6,7 +6,7 @@ trait Search: Clone + std::hash::Hash + Eq + PartialEq + Display {
 
     fn score(&self) -> Self::Score;
     fn end(&self) -> bool;
-    fn moves(&self) -> Vec<Self>;
+    fn moves(&self) -> Vec<(Self, usize)>;
 }
 
 type Rowtype = u64;
@@ -35,9 +35,10 @@ impl Board {
         self.rows[y] = (self.rows[y] & !(1 << x)) | (Into::<Rowtype>::into(value) << x);
     }
 
-    fn randomize(&mut self) {
+    fn randomize(&mut self, seed: u64) {
+        let mut rng: StdRng = SeedableRng::seed_from_u64(seed);
         for y in 0..self.height {
-            self.rows[y] = random::<Rowtype>() % (1 << self.width);
+            self.rows[y] = rng.gen::<Rowtype>() % (1 << self.width);
         }
     }
 
@@ -106,7 +107,7 @@ impl Search for Board {
         self.score() == self.width * self.height
     }
 
-    fn moves(&self) -> Vec<Self> {
+    fn moves(&self) -> Vec<(Self, usize)> {
         let init_score = self.score();
         (0..self.width)
             .map(|x| {
@@ -122,7 +123,7 @@ impl Search for Board {
                         }
                         board.score() != init_score - target_score
                     })
-                    .map(|(board, _, _)| board)
+                    .map(|(board, x, y)| (board, x * self.width + y))
                     .collect::<Vec<_>>()
             })
             .flatten()
@@ -132,21 +133,26 @@ impl Search for Board {
 
 #[derive(Debug)]
 struct SearchState<T: Search> {
-    history: Vec<T>,
+    history: Vec<usize>,
     latest: T,
+    latest_move_index: Option<usize>,
     score: T::Score,
 }
 
 impl<T: Search> SearchState<T> {
     fn moves(&self) -> Vec<Self> {
         let mut new_history = self.history.clone();
-        new_history.push(self.latest.clone());
+        match self.latest_move_index {
+            Some(index) => new_history.push(index),
+            None => ()
+        };
         self.latest
             .moves()
             .into_iter()
-            .map(|new_move| {
+            .map(|(new_move, move_index)| {
                 let mut new_state: SearchState<T> = new_move.into();
                 new_state.history = new_history.clone();
+                new_state.latest_move_index = Some(move_index);
                 new_state
             })
             .collect()
@@ -159,6 +165,7 @@ impl<T: Search> From<T> for SearchState<T> {
         SearchState {
             history: Vec::new(),
             latest: value,
+            latest_move_index: None,
             score: score,
         }
     }
@@ -184,12 +191,15 @@ impl<T: Search> Ord for SearchState<T> {
 
 impl<T: Search> Eq for SearchState<T> {}
 
-fn a_star<T: Search>(init_state: T) -> (Option<SearchState<T>>, usize) {
+fn a_star<T: Search>(init_state: T, max_depth: usize) -> (Option<SearchState<T>>, usize) {
     let mut explored: HashSet<T> = HashSet::new();
     let mut fringe: BinaryHeap<SearchState<T>> = BinaryHeap::new();
     fringe.push(init_state.into());
     ((|| {
         loop {
+            // if explored.len() > 100_000 {
+            //     return None;
+            // }
             // println!("queue: {}", fringe.len());
             match fringe.pop() {
                 None => return None,
@@ -202,7 +212,7 @@ fn a_star<T: Search>(init_state: T) -> (Option<SearchState<T>>, usize) {
                     // );
                     if state.latest.end() {
                         return Some(state);
-                    } else {
+                    } else if state.history.len() < max_depth {
                         explored.insert(state.latest.clone());
                         for next_state in state.moves() {
                             if !explored.contains(&next_state.latest) {
@@ -224,17 +234,24 @@ fn main() {
     // for mv in init_board.moves() {
     //     println!("{mv}");
     // }
-    init_board.randomize();
+    let seed = random();
+    println!("Seed: {seed}");
+    init_board.randomize(seed);
     println!("{init_board}");
+    let mut board = init_board.clone();
 
     let start = SystemTime::now();
-    let (result, n_explored) = a_star(init_board);
+    let (result, n_explored) = a_star(init_board, board.width * board.height);
     match result {
         None => println!("No solution :("),
         Some(soln) => {
             let s_len = soln.history.len();
             println!("Solution:");
-            for board in soln.history {
+            for move_id in soln.history {
+                board = match board.moves().into_iter().find(|(_, i)| *i == move_id) {
+                    Some((new_board, _)) => new_board,
+                    None => panic!("Unable to find move id {move_id}!")
+                };
                 println!("{board}");
             }
             println!("{}", soln.latest);
